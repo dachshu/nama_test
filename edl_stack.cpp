@@ -150,7 +150,7 @@ struct PROPER{
 	int val { -1 };
 };
 
-	void helper_work(vector<PROPER*>& propers, stack<int>& seq_stack) {
+void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack) {
     	if( -1 == numa_run_on_node(0)){
         	cerr << "Error in pinning thread.. " << endl;
         	exit(1);
@@ -158,24 +158,24 @@ struct PROPER{
 		while (true)
 		{
 			for(int i = 0 ; i < num_threads; ++i){
-				switch (propers[i]->op.load(memory_order_acquire))
+				switch ((*p_propers)[i]->op.load(memory_order_acquire))
 				{
 				case OP::PUSH:{
-					int val = propers[i]->val;
-					propers[i]->op.store(OP::EMPTY, memory_order_release);
-					seq_stack.push(val);
+					int val = (*p_propers)[i]->val;
+					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
+					(*p_seq_stack).push(val);
 					break;
 				}
 				case OP::POP:{
-					if (seq_stack.empty()){
-						propers[i]->val = 0;
+					if ((*p_seq_stack).empty()){
+						(*p_propers)[i]->val = 0;
 					}
 					else{
-						propers[i]->val = seq_stack.top();
+						(*p_propers)[i]->val = (*p_seq_stack).top();
 					}
 					
-					propers[i]->op.store(OP::EMPTY, memory_order_release);
-					seq_stack.pop();
+					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
+					(*p_seq_stack).pop();
 
 					break;
 				}
@@ -185,7 +185,7 @@ struct PROPER{
 			}
 		}
 		
-	}
+}
 
 
 // Lock-Free Elimination BackOff Stack
