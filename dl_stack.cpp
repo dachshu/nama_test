@@ -91,6 +91,7 @@ void helper_work(vector<PROPER*>& propers, stack<int>& seq_stack) {
 
 // Lock-Free Elimination BackOff Stack
 class DLStack {
+public:
     stack<int> seq_stack;
 	thread helper;
     
@@ -107,7 +108,7 @@ public:
 			//propers[i]  = ptr;
 		}
 
-		this->helper = thread{ helper_work, &propers, &seq_stack };
+		this->helper = thread{ helper_work, propers, seq_stack };
     }
     ~DLStack() {
         for (auto i = 0; i < MAX_THREADS; ++i)
