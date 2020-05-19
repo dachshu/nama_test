@@ -150,47 +150,7 @@ struct PROPER{
 	int val { -1 };
 };
 
-
-// Lock-Free Elimination BackOff Stack
-class EDLStack {
-	stack<int> seq_stack;
-	thread helper;
-    
-    PROPER* propers[MAX_THREADS];
-
-	EliminationArray* eliminationArray[NUM_NUMA_NODES];
-public:
-	EDLStack()  {
-        for(int i = 0; i < NUM_NUMA_NODES; ++i) {
-            void *raw_ptr = numa_alloc_onnode(sizeof(EliminationArray), i);
-            EliminationArray* ptr = new (raw_ptr) EliminationArray;
-            eliminationArray[i] = ptr;
-        }
-
-		this->helper = thread{ helper_work };
-		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-
-		for(int i = 0; i < MAX_THREADS; ++i) {
-			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
-			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
-			PROPER* ptr = new (raw_ptr) PROPER;
-			propers[i]  = ptr;
-		}
-		for (auto i = 0; i < MAX_THREADS; ++i)
-        {	
-			propers[i]->~PROPER();
-			numa_free(propers[i], sizeof(PROPER));
-        }
-    }
-    ~EDLStack() {
-        for (auto i = 0; i < NUM_NUMA_NODES; ++i)
-        {
-            eliminationArray[i]->~EliminationArray();
-            numa_free(eliminationArray[i], sizeof(EliminationArray));
-        }
-    }
-
-	void helper_work() {
+	void helper_work(vector<PROPER*>& propers, stack<int>& seq_stack) {
     	if( -1 == numa_run_on_node(0)){
         	cerr << "Error in pinning thread.. " << endl;
         	exit(1);
@@ -226,6 +186,53 @@ public:
 		}
 		
 	}
+
+
+// Lock-Free Elimination BackOff Stack
+class EDLStack {
+	stack<int> seq_stack;
+	thread helper;
+    
+    vector<PROPER*> propers;
+
+	EliminationArray* eliminationArray[NUM_NUMA_NODES];
+public:
+	EDLStack()  {
+        for(int i = 0; i < NUM_NUMA_NODES; ++i) {
+            void *raw_ptr = numa_alloc_onnode(sizeof(EliminationArray), i);
+            EliminationArray* ptr = new (raw_ptr) EliminationArray;
+            eliminationArray[i] = ptr;
+        }
+		
+		propers.reserve(MAX_THREADS);
+		
+		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
+		for(int i = 0; i < MAX_THREADS; ++i) {
+			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
+			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
+			PROPER* ptr = new (raw_ptr) PROPER;
+			propers.emplace_back(ptr);
+			//propers[i]  = ptr;
+		}
+
+
+		this->helper = thread{ helper_work, &propers, &seq_stack };
+    }
+    ~EDLStack() {
+        for (auto i = 0; i < NUM_NUMA_NODES; ++i)
+        {
+            eliminationArray[i]->~EliminationArray();
+            numa_free(eliminationArray[i], sizeof(EliminationArray));
+        }
+		for (auto i = 0; i < MAX_THREADS; ++i)
+        {	
+			propers[i]->~PROPER();
+			numa_free(propers[i], sizeof(PROPER));
+        }
+		propers.clear();
+    }
+
+
 
 	void Push(int x) {
 		

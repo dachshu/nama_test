@@ -51,33 +51,7 @@ struct PROPER{
 	int val { -1 };
 };
 
-// Lock-Free Elimination BackOff Stack
-class DLStack {
-    stack<int> seq_stack;
-	thread helper;
-    
-    PROPER* propers[MAX_THREADS];
-public:
-	DLStack() {
-		this->helper = thread{ helper_work };
-		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-    
-		for(int i = 0; i < MAX_THREADS; ++i) {
-			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
-			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
-			PROPER* ptr = new (raw_ptr) PROPER;
-			propers[i]  = ptr;
-		}
-    }
-    ~DLStack() {
-        for (auto i = 0; i < MAX_THREADS; ++i)
-        {	
-			propers[i]->~PROPER();
-			numa_free(propers[i], sizeof(PROPER));
-        }
-    }
-
-	void helper_work() {
+void helper_work(vector<PROPER*>& propers, stack<int>& seq_stack) {
     	if( -1 == numa_run_on_node(0)){
         	cerr << "Error in pinning thread.. " << endl;
         	exit(1);
@@ -114,6 +88,37 @@ public:
 		
 	}
 
+
+// Lock-Free Elimination BackOff Stack
+class DLStack {
+    stack<int> seq_stack;
+	thread helper;
+    
+    vector<PROPER*> propers;
+public:
+	DLStack() {
+		propers.reserve(MAX_THREADS);
+		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
+		for(int i = 0; i < MAX_THREADS; ++i) {
+			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
+			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
+			PROPER* ptr = new (raw_ptr) PROPER;
+			propers.emplace_back(ptr);
+			//propers[i]  = ptr;
+		}
+
+		this->helper = thread{ helper_work, &propers, &seq_stack };
+    }
+    ~DLStack() {
+        for (auto i = 0; i < MAX_THREADS; ++i)
+        {	
+			propers[i]->~PROPER();
+			numa_free(propers[i], sizeof(PROPER));
+        }
+		propers.clear();
+    }
+
+	
 	void Push(int x) {
 		propers[tid]->val = x;
 		propers[tid]->op.store(OP::PUSH, memory_order_release);
