@@ -9,9 +9,11 @@
 #include <chrono>
 #include <memory>
 #include <stack>
-#include <numa.h>
+
 
 using namespace std;
+
+#define NUM_THREAD 4
 
 static constexpr int NUM_TEST = 10000000;
 static constexpr int RANGE = 1000;
@@ -34,9 +36,7 @@ unsigned long fast_rand(void)
 
 
 thread_local unsigned tid;
-thread_local unsigned numa_id;
 
-int num_threads;
 const int MAX_THREADS = 128;
 
 const unsigned NUM_NUMA_NODES = 4;
@@ -48,31 +48,28 @@ enum OP{
 
 struct PROPER{
 	atomic<OP> op {OP::EMPTY };
-	int val { -1 };
+	atomic<int> val { -1 };
 };
 
 void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack) {
-    	if( -1 == numa_run_on_node(0)){
-        	cerr << "Error in pinning thread.. " << endl;
-        	exit(1);
-    	}
+
 		while (true)
 		{
-			for(int i = 0 ; i < num_threads; ++i){
+			for(int i = 0 ; i < NUM_THREAD; ++i){
 				switch ((*p_propers)[i]->op.load(memory_order_acquire))
 				{
 				case OP::PUSH:{
-					int val = (*p_propers)[i]->val;
+					int val = (*p_propers)[i]->val.load(memory_order_acquire);
 					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
 					(*p_seq_stack).push(val);
 					break;
 				}
 				case OP::POP:{
 					if ((*p_seq_stack).empty()){
-						(*p_propers)[i]->val = 0;
+						(*p_propers)[i]->val.store(0, memory_order_release);
 					}
 					else{
-						(*p_propers)[i]->val = (*p_seq_stack).top();
+						(*p_propers)[i]->val.store((*p_seq_stack).top(), memory_order_release);
 					}
 					
 					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
@@ -101,9 +98,7 @@ public:
 		propers.reserve(MAX_THREADS);
 		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
 		for(int i = 0; i < MAX_THREADS; ++i) {
-			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
-			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
-			PROPER* ptr = new (raw_ptr) PROPER;
+			PROPER* ptr = new PROPER;
 			propers.emplace_back(ptr);
 			//propers[i]  = ptr;
 		}
@@ -114,14 +109,14 @@ public:
         for (auto i = 0; i < MAX_THREADS; ++i)
         {	
 			propers[i]->~PROPER();
-			numa_free(propers[i], sizeof(PROPER));
+			delete propers[i];
         }
 		propers.clear();
     }
 
 	
 	void Push(int x) {
-		propers[tid]->val = x;
+		propers[tid]->val.store(x, memory_order_release);
 		propers[tid]->op.store(OP::PUSH, memory_order_release);
 		while (propers[tid]->op.load(memory_order_acquire) != OP::EMPTY) { }
 	}
@@ -129,22 +124,14 @@ public:
 	int Pop() {
 		propers[tid]->op.store(OP::POP, memory_order_release);
 		while (propers[tid]->op.load(memory_order_acquire) != OP::EMPTY) { }
-		int ret =  propers[tid]->val;
-		/////////////////////////////////////////
-		if(ret == -1) {
-			cout << "memory oreder error" << endl;
-			while (true)
-			{
-			}			
-		}
-		////////////////////////////////////////////
+		int ret =  propers[tid]->val.load(memory_order_acquire);
 		return ret;
 	}
 
 	void clear() {
 		for (auto i = 0; i < MAX_THREADS; ++i)
         {	
-			propers[i]->val = -1;
+			propers[i]->val.store(-1);
 			propers[i]->op.store(OP::EMPTY);
         }
 		while (seq_stack.empty() == false)
@@ -158,7 +145,9 @@ public:
 		for (auto i = 0; i < count; ++i) {
 			if (seq_stack.empty()) break;
 			cout << seq_stack.top() << ", ";
+			seq_stack.pop();
 		}
+
 		cout << "\n";
 	}
 } myStack;
@@ -166,13 +155,6 @@ public:
 
 void benchMark(int num_thread, int t) {
     tid = t;
-    unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-    numa_id = (tid / num_core_per_node) % NUM_NUMA_NODES;
-
-    if( -1 == numa_run_on_node(numa_id)){
-        cerr << "Error in pinning thread.. " << tid << ", " << numa_id << endl;
-        exit(1);
-    }
     
 	for (int i = 1; i <= NUM_TEST / num_thread; ++i) {
 		if ((fast_rand() % 2) || i <= 1000 / num_thread) {
@@ -188,10 +170,9 @@ int main() {
 
 	vector<thread> threads;
 
-	for (auto thread_num = 1; thread_num <= 128; thread_num *= 2) {
-		myStack.clear();
+	for (auto thread_num = NUM_THREAD; thread_num <= NUM_THREAD; thread_num *= 2) {
+		//myStack.clear();
 		threads.clear();
-		num_threads = thread_num;
 
 		auto start_t = chrono::high_resolution_clock::now();
         for (int i = 0; i < thread_num; ++i)
