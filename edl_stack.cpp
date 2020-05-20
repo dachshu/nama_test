@@ -49,8 +49,6 @@ bool CAS(Node* volatile * ptr, Node* old_value, Node* new_value) {
 thread_local unsigned tid;
 thread_local unsigned numa_id;
 
-int num_threads;
-
 thread_local int exSize = 1; // thread 별로 교환자 크기를 따로 관리.
 constexpr int MAX_PER_THREAD = 32;
 
@@ -59,7 +57,6 @@ constexpr int MAX_PER_THREAD = 32;
 
 const unsigned NUM_NUMA_NODES = 4;
 const unsigned NUM_CPUS = 64;
-const int MAX_THREADS = 128;
 
 class Exchanger {
 	volatile int value; // status와 교환값의 합성.
@@ -147,31 +144,28 @@ enum OP{
 
 struct PROPER{
 	atomic<OP> op {OP::EMPTY };
-	int val { -1 };
+	atomic<int> val { -1 };
 };
 
-void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack) {
-    	if( -1 == numa_run_on_node(0)){
-        	cerr << "Error in pinning thread.. " << endl;
-        	exit(1);
-    	}
+void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack, int num_threads) {
+
 		while (true)
 		{
 			for(int i = 0 ; i < num_threads; ++i){
 				switch ((*p_propers)[i]->op.load(memory_order_acquire))
 				{
 				case OP::PUSH:{
-					int val = (*p_propers)[i]->val;
+					int val = (*p_propers)[i]->val.load(memory_order_acquire);
 					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
 					(*p_seq_stack).push(val);
 					break;
 				}
 				case OP::POP:{
 					if ((*p_seq_stack).empty()){
-						(*p_propers)[i]->val = 0;
+						(*p_propers)[i]->val.store(0, memory_order_release);
 					}
 					else{
-						(*p_propers)[i]->val = (*p_seq_stack).top();
+						(*p_propers)[i]->val.store((*p_seq_stack).top(), memory_order_release);
 					}
 					
 					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
@@ -185,7 +179,8 @@ void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack) {
 			}
 		}
 		
-}
+	}
+
 
 
 // Lock-Free Elimination BackOff Stack
@@ -196,6 +191,7 @@ class EDLStack {
     vector<PROPER*> propers;
 
 	EliminationArray* eliminationArray[NUM_NUMA_NODES];
+	int num_threads;
 public:
 	EDLStack()  {
         for(int i = 0; i < NUM_NUMA_NODES; ++i) {
@@ -204,30 +200,31 @@ public:
             eliminationArray[i] = ptr;
         }
 		
-		propers.reserve(MAX_THREADS);
-		
+    }
+
+	void init(int num_thread){
+		int num_threads = num_thread;
+		propers.reserve(num_threads);
 		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-		for(int i = 0; i < MAX_THREADS; ++i) {
-			unsigned alloc_numa_id = (i / num_core_per_node) % NUM_NUMA_NODES;
-			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), alloc_numa_id);
-			PROPER* ptr = new (raw_ptr) PROPER;
+		for(int i = 0; i < num_threads; ++i) {
+			PROPER* ptr = new PROPER;
 			propers.emplace_back(ptr);
 			//propers[i]  = ptr;
 		}
 
+		this->helper = thread{ helper_work, &propers, &seq_stack, num_thread };
+	}
 
-		this->helper = thread{ helper_work, &propers, &seq_stack };
-    }
     ~EDLStack() {
         for (auto i = 0; i < NUM_NUMA_NODES; ++i)
         {
             eliminationArray[i]->~EliminationArray();
             numa_free(eliminationArray[i], sizeof(EliminationArray));
         }
-		for (auto i = 0; i < MAX_THREADS; ++i)
+		for (auto i = 0; i < num_threads; ++i)
         {	
-			propers[i]->~PROPER();
-			numa_free(propers[i], sizeof(PROPER));
+			//propers[i]->~PROPER();
+			delete propers[i];
         }
 		propers.clear();
     }
@@ -240,7 +237,7 @@ public:
 		if (0 == result) return; // pop과 교환됨.
 		if (-1 == result) eliminationArray[numa_id]->shrink(); // timeout 됨.
 
-		propers[tid]->val = x;
+		propers[tid]->val.store(x, memory_order_release);
 		propers[tid]->op.store(OP::PUSH, memory_order_release);
 		while (propers[tid]->op.load(memory_order_acquire) != OP::EMPTY) { }
 	}
@@ -254,7 +251,7 @@ public:
 
 		propers[tid]->op.store(OP::POP, memory_order_release);
 		while (propers[tid]->op.load(memory_order_acquire) != OP::EMPTY) { }
-		int ret =  propers[tid]->val;
+		int ret =  propers[tid]->val.load(memory_order_acquire);
 		return ret;
 	}
 
@@ -262,7 +259,7 @@ public:
 		for(int i = 0; i < NUM_NUMA_NODES; ++i) {
 			eliminationArray[i]->init();
 		}
-		for (auto i = 0; i < MAX_THREADS; ++i)
+		for (auto i = 0; i < num_threads; ++i)
         {	
 			propers[i]->val = -1;
 			propers[i]->op.store(OP::EMPTY);
@@ -278,6 +275,7 @@ public:
 		for (auto i = 0; i < count; ++i) {
 			if (seq_stack.empty()) break;
 			cout << seq_stack.top() << ", ";
+			seq_stack.pop();
 		}
 		cout << "\n";
 	}
@@ -304,14 +302,20 @@ void benchMark(int num_thread, int t) {
 	}
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+	if (argc < 2)
+    {
+        fprintf(stderr, "you have to give a thread num\n");
+        exit(-1);
+    }
+    unsigned num_thread = atoi(argv[1]);
+	myStack.init(num_thread);
 
 	vector<thread> threads;
 
-	for (auto thread_num = 1; thread_num <= 128; thread_num *= 2) {
-		myStack.clear();
+	for (auto thread_num = num_thread; thread_num <= num_thread; thread_num *= 2) {
+		//myStack.clear();
 		threads.clear();
-		num_threads = thread_num;
 
 		auto start_t = chrono::high_resolution_clock::now();
         for (int i = 0; i < thread_num; ++i)

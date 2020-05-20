@@ -13,8 +13,6 @@
 
 using namespace std;
 
-#define NUM_THREAD 4
-
 static constexpr int NUM_TEST = 10000000;
 static constexpr int RANGE = 1000;
 
@@ -37,8 +35,6 @@ unsigned long fast_rand(void)
 
 thread_local unsigned tid;
 
-const int MAX_THREADS = 128;
-
 const unsigned NUM_NUMA_NODES = 4;
 const unsigned NUM_CPUS = 64;
 
@@ -51,11 +47,11 @@ struct PROPER{
 	atomic<int> val { -1 };
 };
 
-void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack) {
+void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack, int num_threads) {
 
 		while (true)
 		{
-			for(int i = 0 ; i < NUM_THREAD; ++i){
+			for(int i = 0 ; i < num_threads; ++i){
 				switch ((*p_propers)[i]->op.load(memory_order_acquire))
 				{
 				case OP::PUSH:{
@@ -93,22 +89,28 @@ public:
 	thread helper;
     
     vector<PROPER*> propers;
+	int num_threads;
 public:
 	DLStack() {
-		propers.reserve(MAX_THREADS);
+    }
+
+	void init(int num_thread){
+		int num_threads = num_thread;
+		propers.reserve(num_threads);
 		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-		for(int i = 0; i < MAX_THREADS; ++i) {
+		for(int i = 0; i < num_threads; ++i) {
 			PROPER* ptr = new PROPER;
 			propers.emplace_back(ptr);
 			//propers[i]  = ptr;
 		}
 
-		this->helper = thread{ helper_work, &propers, &seq_stack };
-    }
+		this->helper = thread{ helper_work, &propers, &seq_stack, num_thread };
+	}
+
     ~DLStack() {
-        for (auto i = 0; i < MAX_THREADS; ++i)
+        for (auto i = 0; i < num_threads; ++i)
         {	
-			propers[i]->~PROPER();
+			//propers[i]->~PROPER();
 			delete propers[i];
         }
 		propers.clear();
@@ -129,7 +131,7 @@ public:
 	}
 
 	void clear() {
-		for (auto i = 0; i < MAX_THREADS; ++i)
+		for (auto i = 0; i < num_threads; ++i)
         {	
 			propers[i]->val.store(-1);
 			propers[i]->op.store(OP::EMPTY);
@@ -166,11 +168,18 @@ void benchMark(int num_thread, int t) {
 	}
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+	if (argc < 2)
+    {
+        fprintf(stderr, "you have to give a thread num\n");
+        exit(-1);
+    }
+    unsigned num_thread = atoi(argv[1]);
+	myStack.init(num_thread);
 
 	vector<thread> threads;
 
-	for (auto thread_num = NUM_THREAD; thread_num <= NUM_THREAD; thread_num *= 2) {
+	for (auto thread_num = num_thread; thread_num <= num_thread; thread_num *= 2) {
 		//myStack.clear();
 		threads.clear();
 
