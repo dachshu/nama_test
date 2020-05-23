@@ -56,7 +56,7 @@ constexpr int MAX_PER_THREAD = 32;
 //static const unsigned NUM_CPUS = numa_num_configured_cpus();
 
 const unsigned NUM_NUMA_NODES = 4;
-const unsigned NUM_CPUS = 64;
+const unsigned NUM_CPUS = 32;
 
 class Exchanger {
 	volatile int value; // status와 교환값의 합성.
@@ -206,7 +206,6 @@ public:
 		int num_threads = num_thread;
 		propers.reserve(num_threads);
 		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-        num_core_per_node = num_core_per_node / 2;
 		for(int i = 0; i < num_threads; ++i) {
             unsigned numa_id_ = (i / num_core_per_node) % NUM_NUMA_NODES;
 			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), numa_id_);
@@ -288,7 +287,6 @@ public:
 void benchMark(int num_thread, int t) {
     tid = t;
     unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
-    num_core_per_node = num_core_per_node / 2;
     numa_id = (tid / num_core_per_node) % NUM_NUMA_NODES;
 
     if( -1 == numa_run_on_node(numa_id)){
