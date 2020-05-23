@@ -78,7 +78,7 @@ public:
 
 				/* BUSY가 될 때까지 기다리며 timeout된 경우 -1 반환 */
 				int count;
-				for (count = 0; count < 50; ++count) {
+				for (count = 0; count < 1000; ++count) {
 					if (Status(value & 0x3) == BUSY) {
 						int ret = value >> 2;
 						value = EMPTY;

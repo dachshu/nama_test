@@ -52,9 +52,9 @@ thread_local unsigned numa_id;
 thread_local int exSize = 1; // thread 별로 교환자 크기를 따로 관리.
 constexpr int MAX_PER_THREAD = 32;
 //////////////////////////////////////////////////////////////////////
-constexpr int WAITING_CNT = 50;
-constexpr int TRYING_CNT = 50;
-constexpr unsigned int INCREASE_THRESHOLD = MAX_PER_THREAD/2;
+constexpr int WAITING_CNT = 1000;
+constexpr int TRYING_CNT = 1000;
+constexpr unsigned int INCREASE_THRESHOLD = MAX_PER_THREAD*2;
 constexpr unsigned int DECREASE_THRESHOLD = 2;
 constexpr unsigned int WAIT_THREASHOLD = WAITING_CNT;
 //////////////////////////////////////////////////////////////////////
@@ -168,6 +168,7 @@ public:
 			}
 			n_idx = (s_idx + 1) % exSize;
 		}
+        return false;
 	}
 
 	void init() {
