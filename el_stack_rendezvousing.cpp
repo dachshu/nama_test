@@ -51,9 +51,9 @@ thread_local unsigned numa_id;
 thread_local int exSize = 1; // thread 별로 교환자 크기를 따로 관리.
 constexpr int MAX_PER_THREAD = 32;
 //////////////////////////////////////////////////////////////////////
-constexpr int WAITING_CNT = 1000;
-constexpr int TRYING_CNT = 1000;
-constexpr unsigned int INCREASE_THRESHOLD = MAX_PER_THREAD;
+constexpr int WAITING_CNT = 50;
+constexpr int TRYING_CNT = 50;
+constexpr unsigned int INCREASE_THRESHOLD = MAX_PER_THREAD/2;
 constexpr unsigned int DECREASE_THRESHOLD = 2;
 constexpr unsigned int WAIT_THREASHOLD = WAITING_CNT;
 //////////////////////////////////////////////////////////////////////
@@ -62,7 +62,7 @@ constexpr unsigned int WAIT_THREASHOLD = WAITING_CNT;
 //static const unsigned NUM_CPUS = numa_num_configured_cpus();
 
 const unsigned NUM_NUMA_NODES = 4;
-const unsigned NUM_CPUS = 64;
+const unsigned NUM_CPUS = 32;
 
 class Exchanger {
 	volatile int value; // status와 교환값의 합성.
@@ -221,8 +221,9 @@ public:
 			if (nullptr == head) return 0;
 			if (head != top) continue;
 			if (true == CAS(&top, head, head->next)) return head->key;
-		}
-	}
+            
+    	}
+    }
 
 	void clear() {
 		for(int i = 0; i < NUM_NUMA_NODES; ++i) {

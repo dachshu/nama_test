@@ -55,7 +55,7 @@ constexpr int MAX_PER_THREAD = 32;
 //static const unsigned NUM_CPUS = numa_num_configured_cpus();
 
 const unsigned NUM_NUMA_NODES = 4;
-const unsigned NUM_CPUS = 64;
+const unsigned NUM_CPUS = 32;
 
 class Exchanger {
 	volatile int value; // status와 교환값의 합성.
@@ -78,7 +78,7 @@ public:
 
 				/* BUSY가 될 때까지 기다리며 timeout된 경우 -1 반환 */
 				int count;
-				for (count = 0; count < 100; ++count) {
+				for (count = 0; count < 50; ++count) {
 					if (Status(value & 0x3) == BUSY) {
 						int ret = value >> 2;
 						value = EMPTY;
@@ -162,6 +162,9 @@ public:
 		auto e = new Node{ x };
 		while (true)
 		{
+			//int result = eliminationArray[numa_id]->visit(x);
+			//if (0 == result) break; // pop과 교환됨.
+			//if (-1 == result) eliminationArray[numa_id]->shrink(); // timeout 됨.
 			auto head = top;
 			e->next = head;
 			if (head != top) continue;
@@ -176,6 +179,10 @@ public:
 	int Pop() {
 		while (true)
 		{
+			//int result = eliminationArray[numa_id]->visit(0);
+			//if (0 == result) continue; // pop끼리 교환되면 계속 시도
+			//if (-1 == result) eliminationArray[numa_id]->shrink(); // timeout 됨.
+			//else return result;
 			auto head = top;
 			if (nullptr == head) return 0;
 			if (head != top) continue;
