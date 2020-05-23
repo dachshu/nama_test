@@ -166,10 +166,10 @@ void helper_work(vector<PROPER*>* p_propers, stack<int>* p_seq_stack, int num_th
 					}
 					else{
 						(*p_propers)[i]->val.store((*p_seq_stack).top(), memory_order_release);
+					    (*p_seq_stack).pop();
 					}
 					
 					(*p_propers)[i]->op.store(OP::EMPTY, memory_order_release);
-					(*p_seq_stack).pop();
 
 					break;
 				}
@@ -206,8 +206,11 @@ public:
 		int num_threads = num_thread;
 		propers.reserve(num_threads);
 		unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
+        num_core_per_node = num_core_per_node / 2;
 		for(int i = 0; i < num_threads; ++i) {
-			PROPER* ptr = new PROPER;
+            unsigned numa_id_ = (i / num_core_per_node) % NUM_NUMA_NODES;
+			void *raw_ptr = numa_alloc_onnode(sizeof(PROPER), numa_id_);
+            PROPER* ptr = new (raw_ptr) PROPER;
 			propers.emplace_back(ptr);
 			//propers[i]  = ptr;
 		}
@@ -285,6 +288,7 @@ public:
 void benchMark(int num_thread, int t) {
     tid = t;
     unsigned num_core_per_node = NUM_CPUS / NUM_NUMA_NODES;
+    num_core_per_node = num_core_per_node / 2;
     numa_id = (tid / num_core_per_node) % NUM_NUMA_NODES;
 
     if( -1 == numa_run_on_node(numa_id)){
